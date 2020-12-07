@@ -1,6 +1,5 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import cv2
 import os
 
 def plot_losses(training_proc_avg, test_proc_avg):
@@ -27,6 +26,7 @@ def update_lr(optimizer, lr):
         param_group['lr'] = lr
 
 def visualize_vid(seq):
+    import cv2
     # opens a cv2 window to visualize the generated video
     if seq.ndim == 4:
         #print(seq.shape)

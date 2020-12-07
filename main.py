@@ -15,7 +15,9 @@ from models import ConvNet3D
 # Device configuration
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-def validate(model, criterion, no_classes, val_set, training_proc_avg, test_proc_avg):
+def validate(batch_size, classes,
+model, criterion, no_classes, gen_signals_val, gen_labels_val, 
+training_proc_avg, test_proc_avg, last=False):
     # Test the model (validation set)
     model.eval()  # eval mode (batchnorm uses moving mean/variance instead of mini-batch mean/variance)
     with torch.no_grad():
@@ -25,11 +27,20 @@ def validate(model, criterion, no_classes, val_set, training_proc_avg, test_proc
 
         class_correct = list(0. for i in range(no_classes))
         class_total = list(0. for i in range(no_classes))
-        for images, labels in test_dl:
-            images = images.to(device)
-            labels = labels.to(device)
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+        
+        total_step = len(gen_signals_val) // batch_size
+        for i in range(total_step):
+            if i<total_step-1:
+                signals = torch.from_numpy(gen_signals_val[i*batch_size:(i+1)*batch_size]).to(device).float()
+                labels = torch.from_numpy(gen_labels_val[i*batch_size:(i+1)*batch_size]).to(device).long()
+            else:
+                signals = torch.from_numpy(gen_signals_val[i*batch_size:-1]).to(device).float()
+                labels = torch.from_numpy(gen_labels_val[i*batch_size:-1]).to(device).long()
+            
+            # Forward pass
+            outputs = model(signals)
+            loss = criterion(outputs, labels)    
+
             current_losses_test.append(loss.item())
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
@@ -44,20 +55,23 @@ def validate(model, criterion, no_classes, val_set, training_proc_avg, test_proc
         print('Test Accuracy of the model on the test images: {} %'.format(100 * correct / total))
         test_proc_avg.append(mean(current_losses_test))
 
-        for i in range(10):
-            print('Total objects in class no. {} ({}): {}. Accuracy: {}'.format(i, classes[i],
-            class_total[i], 100 * class_correct[i] / class_total[i]))
+        if last==True:
+            for i in range(no_classes):
+                print('Total objects in class no. {} ({}): {}. Accuracy: {}'.format(i, classes[i],
+                class_total[i], 100 * class_correct[i] / class_total[i]))
 
     # plot loss
     plot_losses(training_proc_avg, test_proc_avg)
 
 def train():
+
     # trains model from scratch
     # Controlling source of randomness: pytorch RNG
     torch.manual_seed(0)
 
     # train constants
-    num_epochs = 500 #5000 originally
+    no_epochs = 30 #5000 originally
+    no_videos_by_class = 200
     batch_size = 256
     learning_rate = 0.001
 
@@ -65,34 +79,42 @@ def train():
     # stores it all in memory
     # alternatively split it so the generator generates as needed
     # or save to a txt file then read as needed
-    datagenerator = DataGen()
-    num_classes = datagenerator.no_classes # (76) no of heart rates to classificate
+    datagenerator_train = DataGen(no_videos_by_class=no_videos_by_class)
+    no_classes = datagenerator_train.no_classes + 1 
+    # (74) no of heart rates to classificate + 1: None
+    # originally in the tf implementation it was 75 + 1 since they used
+    # linspace instead of arange so it includes the last value unlike arange
     # if using regression then this is no longer needed
-    gen_signals, gen_labels = datagenerator.gen_signal()
+    gen_signals_train, gen_labels_train = datagenerator_train.gen_signal()
+
+    # validation/test set
+    datagenerator_val = DataGen(no_videos_by_class=no_videos_by_class//10)
+    gen_signals_val, gen_labels_val = datagenerator_val.gen_signal()
 
     # initiates model and loss 
-    model = ConvNet3D(num_classes).to(device)
+    model = ConvNet3D(no_classes).to(device)
     criterion = nn.CrossEntropyLoss() # alternatively MSE if regression or PSNR/PSD or pearson correlation
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    summary(model, input_size=gen_signals.shape[1:])
+    summary(model, input_size=gen_signals_train.shape[1:])
     
     # Train the model
-    total_step = len(gen_signals) // batch_size
+    total_step = len(gen_signals_train) // batch_size
     curr_lr = learning_rate
 
-    print(gen_signals.shape, gen_labels.shape)
+    print('Training data: ', gen_signals_train.shape, gen_labels_train.shape)
+    print('Validation data: ', gen_signals_val.shape, gen_labels_val.shape)
     training_proc_avg = []
     test_proc_avg = []
 
-    for epoch in range(num_epochs):
+    for epoch in range(no_epochs):
         current_losses = []
         for i in range(total_step):
             if i<total_step-1:
-                signals = torch.from_numpy(gen_signals[i*batch_size:(i+1)*batch_size]).to(device).float()
-                labels = torch.from_numpy(gen_labels[i*batch_size:(i+1)*batch_size]).to(device).long()
+                signals = torch.from_numpy(gen_signals_train[i*batch_size:(i+1)*batch_size]).to(device).float()
+                labels = torch.from_numpy(gen_labels_train[i*batch_size:(i+1)*batch_size]).to(device).long()
             else:
-                signals = torch.from_numpy(gen_signals[i*batch_size:-1]).to(device).float()
-                labels = torch.from_numpy(gen_labels[i*batch_size:-1]).to(device).long()
+                signals = torch.from_numpy(gen_signals_train[i*batch_size:-1]).to(device).float()
+                labels = torch.from_numpy(gen_labels_train[i*batch_size:-1]).to(device).long()
             
             # Forward pass
             outputs = model(signals)
@@ -105,8 +127,8 @@ def train():
 
             if (i+1) % 10 == 0:
                 print ('Epoch [{}/{}], Step [{}/{}], Loss: {:.8f}' 
-                    .format(epoch+1, num_epochs, i+1, total_step, loss.item()))
-                    
+                    .format(epoch+1, no_epochs, i+1, total_step, loss.item()))
+                     
                 current_losses.append(loss.item()) # appends the current value of the loss into a list
         
         # Decay learning rate
@@ -115,11 +137,17 @@ def train():
             update_lr(optimizer, curr_lr)
 
         training_proc_avg.append(mean(current_losses)) # calculates mean of losses for current epoch and appends to list of avgs
-        
+      
+    # validate on test set
+    validate(batch_size=batch_size, 
+    classes=np.concatenate((datagenerator_val.heart_rates, None), axis=None),
+    model=model, criterion=criterion, no_classes=no_classes, 
+    gen_signals_val=gen_signals_val, gen_labels_val=gen_labels_val, 
+    training_proc_avg=training_proc_avg, test_proc_avg=test_proc_avg, last=True)
 
     # Save the model checkpoint
     torch.save(model.state_dict(), 'model.ckpt')
-
+    
 def main():
     train()
 

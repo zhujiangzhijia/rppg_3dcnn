@@ -94,63 +94,68 @@ class DataGen():
         
         c = 0
         # generates signals that resemble rppg waves
-        for i, freq in enumerate(self.freqs):
-            # generates baseline signal (fitted fourier series)
-            # phase. 33 corresponds to a full phase shift for HR=55 bpm
-            t2 = self.t + (np.random.randint(low=0, high=33) * self.sampling)
-            signal = (self.coeff['a0'] + self.coeff['a1'] * np.cos(t2 * self.coeff['w'] * freq) 
-            + self.coeff['b1'] * np.sin(t2 * self.coeff['w'] * freq) 
-            + self.coeff['a2'] * np.cos(2 * t2 * self.coeff['w'] * freq) 
-            + self.coeff['b2'] * np.sin(2 * t2 * self.coeff['w'] * freq) )
-            signal = signal - np.min(signal)
-            signal = signal / np.max(signal)
+        for vids_per_freq in range(self.no_videos_by_class):
+            for i, freq in enumerate(self.freqs):
+                # generates baseline signal (fitted fourier series)
+                # phase. 33 corresponds to a full phase shift for HR=55 bpm
+                t2 = self.t + (np.random.randint(low=0, high=33) * self.sampling)
+                signal = (self.coeff['a0'] + self.coeff['a1'] * np.cos(t2 * self.coeff['w'] * freq) 
+                + self.coeff['b1'] * np.sin(t2 * self.coeff['w'] * freq) 
+                + self.coeff['a2'] * np.cos(2 * t2 * self.coeff['w'] * freq) 
+                + self.coeff['b2'] * np.sin(2 * t2 * self.coeff['w'] * freq) )
+                signal = signal - np.min(signal)
+                signal = signal / np.max(signal)
 
-            # adds trends and noise
+                # adds trends and noise
+                r = np.random.randint(low=0, high=len(self.tendencies_max))
+                trend = self.gen_trend(len(self.t), self.tendencies_order[r], 0, np.random.uniform(
+                    low=self.tendencies_min[r], high=self.tendencies_max[r]), np.random.randint(low=0, high=2))
+
+                signal = np.expand_dims(signal + trend, 1)
+                signal = signal - np.min(signal)
+                
+                # replicates the signal value to make an image
+                img = np.tile(signal, (self.img_height, 1, self.img_height))
+                img = np.transpose(img, axes=(0, 2, 1))
+
+                img = img / (self.img_height * self.img_height)
+
+                amplitude = np.random.uniform(low=1.5, high=4)
+                noise_energy = amplitude * 0.25 * \
+                    np.random.uniform(low=1, high=10) / 100
+
+                # puts the images together to make a video
+                for j in range(0, self.length_vid):
+                    temp = 255 * ((amplitude * img[:, :, j]) + np.random.normal(
+                        size=(self.img_height, self.img_height), loc=0.5, scale=0.25) * noise_energy)
+                    temp[temp < 0] = 0
+                    x[c, 0, :, :, j] = temp.astype('uint8') / 255.0
+
+                x[c] = x[c] - np.mean(x[c])
+                y[c] = self.labels_cat[i]
+                
+                #print(c, y[c])
+                c = c + 1
+        
+        for vids_per_freq in range(self.no_videos_by_class):
+            # generates noise to act as the class for no heart rate?
+            # constant image noise (gaussian distribution)
             r = np.random.randint(low=0, high=len(self.tendencies_max))
             trend = self.gen_trend(len(self.t), self.tendencies_order[r], 0, np.random.uniform(
                 low=self.tendencies_min[r], high=self.tendencies_max[r]), np.random.randint(low=0, high=2))
 
-            signal = np.expand_dims(signal + trend, 1)
-            signal = signal - np.min(signal)
-            
-            # replicates the signal value to make an image
-            img = np.tile(signal, (self.img_height, 1, self.img_height))
-            img = np.transpose(img, axes=(0, 2, 1))
-
-            img = img / (self.img_height * self.img_height)
-
-            amplitude = np.random.uniform(low=1.5, high=4)
-            noise_energy = amplitude * 0.25 * \
-                np.random.uniform(low=1, high=10) / 100
-
-            # puts the images together to make a video
-            for j in range(0, self.length_vid):
-                temp = 255 * ((amplitude * img[:, :, j]) + np.random.normal(
-                    size=(self.img_height, self.img_height), loc=0.5, scale=0.25) * noise_energy)
-                temp[temp < 0] = 0
-                x[c, 0, :, :, j] = temp.astype('uint8') / 255.0
-
+            # add a tendancy on noise
+            signal = np.expand_dims(trend, 1)
+            img = np.tile(signal, (self.img_height, 1, self.img_height)) / \
+                (self.img_height * self.img_height)
+            img = np.expand_dims(np.transpose(img, axes=(0, 2, 1)), 3)
+            temp = np.expand_dims(np.random.normal(
+                size=(self.img_height, self.img_height, self.length_vid)) / 50, 3) + img
+            x[c] = np.reshape(temp, (1, self.img_height, self.img_height, self.length_vid))
             x[c] = x[c] - np.mean(x[c])
-            y[c] = self.labels_cat[i]
-
+            y[c] = self.labels_cat[self.no_classes]
+            
+            #print(c, y[c])
             c = c + 1
-        
-        # generates noise to act as the class for no heart rate?
-        # constant image noise (gaussian distribution)
-        r = np.random.randint(low=0, high=len(self.tendencies_max))
-        trend = self.gen_trend(len(self.t), self.tendencies_order[r], 0, np.random.uniform(
-            low=self.tendencies_min[r], high=self.tendencies_max[r]), np.random.randint(low=0, high=2))
-
-        # add a tendancy on noise
-        signal = np.expand_dims(trend, 1)
-        img = np.tile(signal, (self.img_height, 1, self.img_height)) / \
-            (self.img_height * self.img_height)
-        img = np.expand_dims(np.transpose(img, axes=(0, 2, 1)), 3)
-        temp = np.expand_dims(np.random.normal(
-            size=(self.img_height, self.img_height, self.length_vid)) / 50, 3) + img
-        x[c] = np.reshape(temp, (1, self.img_height, self.img_height, self.length_vid))
-        x[c] = x[c] - np.mean(x[c])
-        y[c] = self.labels_cat[self.no_classes]
-        c = c + 1
 
         return x, y

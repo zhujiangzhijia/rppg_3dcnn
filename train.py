@@ -4,8 +4,6 @@ from statistics import mean
 
 import torch 
 import torch.nn as nn
-import torchvision
-import torchvision.transforms as transforms
 from torchsummary import summary
 
 from utils import update_lr, plot_losses

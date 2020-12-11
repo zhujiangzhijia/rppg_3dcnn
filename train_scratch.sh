@@ -1,1 +1,1 @@
-nohup -u python main.py > output.log &
+nohup python -u main.py > output.log &
